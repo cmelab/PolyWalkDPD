@@ -1,0 +1,6 @@
+name: polywalkdpd
+channels:
+  - conda-forge
+dependencies:
+  - flowermd
+  - time

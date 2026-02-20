@@ -7,7 +7,7 @@ import time
 from dpd_utils import pbc,initialize_snapshot_rand_walk,check_bond_length_equilibration,check_inter_particle_distance
 
 
-def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1.15,kT=1.0,A=1000,gamma=800,dt=0.001,particle_spacing=1.1):
+def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1.15,kT=1.0,A=1000,gamma=800,dt=0.001,particle_spacing=1.1,seed=123):
     
     '''
     Initialize a polymer system in a cubic box using a random walk and a HOOMD simulation with DPD forces.
@@ -37,6 +37,8 @@ def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1
         timestep for HOOMD simulation
     particle_spacing : float, default 1.1
         condition for ending the soft push simulation
+    seed : int, default 123
+        random seed for the HOOMD simulation state
 
     -------
     Returns
@@ -57,7 +59,7 @@ def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1
     harmonic.params["b"] = dict(r0=bond_l, k=k)
     integrator = hoomd.md.Integrator(dt=dt)
     integrator.forces.append(harmonic)
-    simulation = hoomd.Simulation(device=hoomd.device.auto_select(), seed=np.random.randint(65535))# TODO seed
+    simulation = hoomd.Simulation(device=hoomd.device.auto_select(), seed=np.random.randint(seed))# TODO seed
     simulation.operations.integrator = integrator 
     simulation.create_state_from_snapshot(frame)
     const_vol = hoomd.md.methods.ConstantVolume(filter=hoomd.filter.All())
@@ -68,22 +70,25 @@ def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1
     DPD.params[('A', 'A')] = dict(A=A, gamma=gamma)
     integrator.forces.append(DPD)
     
+    logger = hoomd.logging.Logger(categories=['scalar'])
+    logger.add(simulation, quantities=['tps'])
+    print_log = hoomd.write.Table(trigger=hoomd.trigger.Periodic(500),logger=logger)
+    simulation.operations.writers.append(print_log)
+    
     simulation.run(0)
     simulation.run(1000)
     snap=simulation.state.get_snapshot()
-    N = num_pol*num_mon
-    time_factor = N/90000
-    
+ 
     while not check_bond_length_equilibration(snap,num_mon, num_pol,max_bond_length=particle_spacing): 
         check_time = time.perf_counter()
-        if (check_time-start_time) > 60*time_factor:
+        if (check_time-start_time) > 3600:
             return num_pol*num_mon, 0
         simulation.run(1000)
         snap=simulation.state.get_snapshot()
 
     while not check_inter_particle_distance(snap,minimum_distance=0.95):
         check_time = time.perf_counter()
-        if (check_time-start_time) > 60*time_factor:
+        if (check_time-start_time) > 3600:
             return num_pol*num_mon, 0
         simulation.run(1000)
         snap=simulation.state.get_snapshot()
