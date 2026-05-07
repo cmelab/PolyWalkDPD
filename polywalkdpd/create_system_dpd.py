@@ -4,10 +4,10 @@ import gsd, gsd.hoomd
 import hoomd 
 import time
 
-from dpd_utils import pbc,initialize_snapshot_rand_walk,check_bond_length_equilibration,check_inter_particle_distance
+from dpd_utils import initialize_snapshot_rand_walk,check_bond_length_equilibration,check_inter_particle_distance
 
 
-def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1.15,kT=1.0,A=1000,gamma=800,dt=0.001,particle_spacing=1.1,seed=123):
+def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1.15,kT=1.0,A=1000,gamma=800,dt=0.001,particle_spacing=1.1,sim_seed=123,np_seed=1234):
     
     '''
     Initialize a polymer system in a cubic box using a random walk and a HOOMD simulation with DPD forces.
@@ -37,8 +37,10 @@ def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1
         timestep for HOOMD simulation
     particle_spacing : float, default 1.1
         condition for ending the soft push simulation
-    seed : int, default 123
+    sim_seed : int, default 123
         random seed for the HOOMD simulation state
+    np_seed : int, default 1234
+        seed for random number generator in random walk
 
     -------
     Returns
@@ -52,14 +54,14 @@ def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1
     print(f"\nRunning with A={A}, gamma={gamma}, k={k}, "
           f"num_pol={num_pol}, num_mon={num_mon}")
     start_time = time.perf_counter()
-    frame = initialize_snapshot_rand_walk(num_mon=num_mon,num_pol=num_pol,bond_length=bond_l,density=density)
+    frame = initialize_snapshot_rand_walk(num_mon=num_mon,num_pol=num_pol,bond_length=bond_l,density=density,seed=np_seed)
     build_stop = time.perf_counter()
     print("Total build time: ", build_stop-start_time)
     harmonic = hoomd.md.bond.Harmonic()
     harmonic.params["b"] = dict(r0=bond_l, k=k)
     integrator = hoomd.md.Integrator(dt=dt)
     integrator.forces.append(harmonic)
-    simulation = hoomd.Simulation(device=hoomd.device.auto_select(), seed=np.random.randint(seed))# TODO seed
+    simulation = hoomd.Simulation(device=hoomd.device.auto_select(), seed=np.random.randint(sim_seed))
     simulation.operations.integrator = integrator 
     simulation.create_state_from_snapshot(frame)
     const_vol = hoomd.md.methods.ConstantVolume(filter=hoomd.filter.All())
@@ -74,25 +76,30 @@ def create_polymer_system_dpd(num_pol,num_mon,density,k=20000,bond_l=1.0,r_cut=1
     logger.add(simulation, quantities=['tps'])
     print_log = hoomd.write.Table(trigger=hoomd.trigger.Periodic(500),logger=logger)
     simulation.operations.writers.append(print_log)
-    
+    '''
+    gsd_out = hoomd.write.GSD(
+    trigger=hoomd.trigger.Periodic(10),
+    mode='wb',
+    dynamic=['property','momentum'],
+    filename='run_len_%s_pol_%s.gsd'%(num_mon,num_pol),
+    truncate=False)
+    simulation.operations.writers.append(gsd_out)
+    '''
     simulation.run(0)
-    simulation.run(1000)
+    #gsd_out.flush()
+    simulation.run(500)
+    #gsd_out.flush()
     snap=simulation.state.get_snapshot()
- 
-    while not check_bond_length_equilibration(snap,num_mon, num_pol,max_bond_length=particle_spacing): 
-        check_time = time.perf_counter()
-        if (check_time-start_time) > 3600:
-            return num_pol*num_mon, 0
-        simulation.run(1000)
-        snap=simulation.state.get_snapshot()
 
     while not check_inter_particle_distance(snap,minimum_distance=0.95):
         check_time = time.perf_counter()
-        if (check_time-start_time) > 3600:
-            return num_pol*num_mon, 0
-        simulation.run(1000)
+        if (check_time-start_time) > 7200:
+            return 0
+        simulation.run(100)
+        #gsd_out.flush()
         snap=simulation.state.get_snapshot()
         
     end_time = time.perf_counter()
+    total_time = end_time - start_time
     print("Total build and simulation time:", end_time - start_time)
-    return snap.particles.position
+    return total_time
