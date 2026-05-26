@@ -14,12 +14,16 @@ def initialize_snapshot_rand_walk(num_pol, num_mon, density=0.85, bond_length=1.
     N = num_pol * num_mon
     L = np.cbrt(N / density)
 
-    #replace chain loop with vectorized random walk
     positions = np.empty((N, 3))
     starts = rng.uniform(-L/2, L/2, size=(num_pol, 3))
-    deltas = rng.normal(size=(num_pol, num_mon - 1, 3))
-    deltas *= bond_length / np.linalg.norm(deltas, axis=2, keepdims=True)
 
+    thetas = rng.uniform(0,2*np.pi,size=(num_pol,num_mon-1))
+    phis = np.arccos(rng.uniform(-1,1,size=(num_pol,num_mon-1)))
+    x = np.sin(phis)*np.cos(thetas)
+    y = np.sin(phis)*np.sin(thetas)
+    z = np.cos(phis)
+
+    deltas = np.stack([x,y,z],axis=2) * bond_length
     displacements = np.cumsum(deltas, axis=1)
 
     positions_view = positions.reshape(num_pol, num_mon, 3)
